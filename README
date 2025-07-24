@@ -1,0 +1,34 @@
+# Análisis de Costos Médicos con Modelos de Regresión
+
+Este proyecto aplica técnicas estadísticas y de machine learning para modelar los gastos médicos en una población. Utiliza regresión lineal, transformaciones logarítmicas y un modelo GLM con distribución Gamma y enlace logarítmico.
+
+## 🔍 Objetivo
+Explorar y predecir los costos médicos (`charges`) en función de variables como edad, IMC, tabaquismo, sexo, hijos y región. Además, se busca aplicar buenas prácticas de modelado interpretativo y validación.
+
+## 📦 Contenido
+- `medical-cost-modeling.Rmd`: Código y análisis completo.
+- Visualizaciones y métricas del desempeño (AIC, R², elasticidades, etc.)
+- Recomendaciones prácticas para equipos de negocio.
+
+## 🧪 Técnicas aplicadas
+- Regresión OLS y log-transformada
+- GLM Gamma-log
+- Validación cruzada train/test
+- Evaluación de métricas (R², MAPE, Gini)
+- Interpretación de coeficientes exponenciados
+
+## 📈 Resultados
+- El modelo GLM ajusta bien los datos (R² ≈ 0.84).
+- El tabaquismo multiplica las primas por ~7.6.
+- Elasticidades útiles para segmentación tarifaria.
+
+## 💡 Recomendaciones
+- Comunicar resultados a áreas de negocio.
+- Aplicar segmentación por riesgo en pricing.
+- Evaluar nuevas variables en futuros modelos.
+
+## ✍️ Autor
+Alexis Medrano Rivera
+
+## 🔗 Publicación
+[GitHub Pages](https://alkghkl.github.io/medical-cost-modeling/medical-cost-modeling.html)
