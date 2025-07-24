@@ -1,0 +1,556 @@
+---
+title: "Análisis de factores que influyen en el costo de los seguros médicos (2020–2025)"
+author: "Alexis Medrano Rivera"
+date: "2025-07-19"
+output: html_document
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(lmtest)
+library(car)
+library(sandwich)
+library(MASS)
+```
+
+## Introducción
+
+Factores como la edad, el índice de masa corporal (IMC), el número de hijos, el hábito de fumar y la región geográfica de residencia pueden tener un impacto significativo o moderado en el precio de las pólizas de seguro médico. Este es un tema crucial tanto para las compañias aseguradoras como para quienes diseñan productos de seguros. Por tal motivo este proyecto busca mejorar la precisión en la estimación de precios y ajustar el perfil de riesgo para diseñar productos más eficientes.
+
+El presente proyecto fue inspirado en el dataset **"Medical Cost Personal Datasets"** de Kaggle, el cual fue utilizado como base para generar un conjunto de datos artificial con 500 observaciones comprendidas entre enero de 2020 y julio de 2025, con el objetivo de recrear circunstancias reales del mercado. A partir de este dataset, se ajustó un modelo de regresión múltiple, se validaron sus supuestos y se emitieron recomendaciones y conclusiones orientadas a la fijación adecuada de precios.
+
+## Data
+
+-   **Origen:** Simulado *ad hoc* para fines académicos (semilla fija para reproducibilidad).
+
+-   **Rango temporal:** 01‑ene‑2020 — 19‑jul‑2025.
+
+-   **Registros:** 500 observaciones a nivel individual.
+
+-   **Variables:**
+
+    -   `date`: Fecha de emisión
+    -   `age`: Edad en años
+    -   `sex`: Sexo (`male` / `female`)
+    -   `bmi`: Índice de masa corporal
+    -   `children`: Número de dependientes
+    -   `smoker`: Fumador (`yes` / `no`)
+    -   `region`: Región (`northeast`, `northwest`, `southeast`, `southwest`)
+    -   `charges`: Costo de la póliza en USD
+
+**Nota:** Este dataset es completamente simulado y no representa datos reales.
+
+## Metodología
+
+En este apartado se describen con detalle los pasos seguidos para explorar, preparar, modelar y validar los datos, así como la forma de interpretar los resultados obtenidos.
+
+### 1 Exploratory Data Analysis (EDA)
+
+Primero se cargan los datos y se realiza un análisis exploratorio para familiarizarse con la distribución y las relaciones de las variables.
+
+```{r}
+# cargar data
+data <- read.csv("C:/Users/Usuario/Downloads/mi_dataset_seguros.csv")
+head(data)
+
+# Vista rápida de las variables
+str(data)        # Estructura de las variables
+summary(data)    # Estadísticas descriptivas básicas
+colSums(is.na(data)) # Buscar datos faltantes
+```
+
+#### 1.1 Distribuciones univariadas
+
+Histogramas de `age`, `bmi` y `charges` para detectar sesgos, colas o valores atípicos:
+
+```{r}
+library(ggplot2)
+# gráfico de histograma para edad
+ggplot(data, aes(x = age)) +
+  geom_histogram(binwidth = 5, fill = "steelblue",color = "black", alpha = 1.2) +
+   labs(title = "Distribución de edad",
+       x = "Edad (años)",
+       y = "Frecuencia") + 
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14)
+  )
+
+# gráfico de histograma para IMC
+ggplot(data, aes(x = bmi)) +
+  geom_histogram(binwidth = 2, fill = "steelblue", color = "black", alpha = 1.2) +
+  labs(
+    title = "Distribución del índice de masa corporal (IMC)",
+    x = "Índice de masa corporal (IMC)",
+    y = "Frecuencia"
+  ) + 
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14)
+  )
+
+# Gráfico de histograma para el costo de la póliza
+ggplot(data, aes(x = charges)) +
+  geom_histogram(binwidth = 1000, fill = "steelblue", color = "black", alpha = 1.2) +
+  labs(
+    title = "Distribución del costo de la póliza",
+    x = "Costo de la póliza (USD)",
+    y = "Frecuencia"
+  ) + 
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14)
+  )
+```
+
+#### 1.2 Boxplots por categoría
+
+Comparación de `charges` según `smoker` y `region`:
+
+```{r}
+# Boxplot de charges por smoker
+ggplot(data, aes(x = smoker, y = charges,fill = smoker)) +
+  geom_boxplot() +
+     labs(title = "Costo de poliza por habito de fumar",
+       x = "Hábito de fumar",
+       y = "Costo de la póliza (USD)") + 
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14)
+  )
+
+
+# Boxplot de charges por region
+ggplot(data, aes(x = region, y = charges,fill = region)) + 
+  geom_boxplot() +
+     labs(title = "Costo de poliza por región",
+       x = "región",
+       y = "Costo de la póliza (USD)") + 
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14)
+  )
+
+# Boxplot de charges por número de hijos
+ggplot(data, aes(x = children, y = charges,fill = factor(children))) + 
+  geom_boxplot() +
+     labs(title = "Costo de poliza por número de hijos",
+       x = "Número de hijos",
+       y = "Costo de la póliza (USD)") + 
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14)
+  )
+```
+
+#### 1.3 Series temporales
+
+```{r}
+#Transformar fecha
+data$date <- as.Date(data$date)
+
+# Serie temporal
+data %>% 
+  mutate(year_month = floor_date(date, "month")) %>%
+  group_by(year_month) %>%
+  summarize(avg_charges = mean(charges)) %>%
+  ggplot(aes(x = year_month, y = avg_charges)) +
+  geom_line() +
+  labs(title = "Serie de tiempo del costo medio mensual de pólizas", x = "Fecha", y = "Costo promedio (USD)") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14)
+  )
+```
+
+### 2 Preprocesamiento
+
+A continuación se prepara la data para modelado. Para esto, se convierten las variables categóricas a factores.
+
+1.  Codificación de variables categóricas
+
+    ```{r}
+    # Crear dummies para sex, smoker y region
+    data$sex     <- factor(data$sex, levels=c("female","male"))
+    data$smoker  <- factor(data$smoker, levels=c("no","yes"))
+    data$region  <- factor(data$region)
+    ```
+
+2.  Eliminamos `date`
+
+    ```{r}
+    library(dplyr) 
+    data <- data %>% 
+      dplyr::select(-any_of("date"))
+    ```
+
+3.  Verificamos la estructura de la data para el modelado
+
+    ```{r}
+    # Verificar valores únicos y estructura actual
+    str(data)
+    lapply(data[c("sex", "smoker", "region")], levels)
+    ```
+
+### 3 Modelado y validación de supuestos (modelo original)
+
+Se ajusta un modelo de regresión lineal múltiple con `charges` como variable dependiente y todas las demás como independientes o explicativas. Se incluyen efectos por categoría en `sex`, `smoker` y `region` mediante el uso de variables dummy (factoriales).
+
+#### 3.1 Modelado
+
+```{r}
+# Ajuste del modelo de regresión lineal
+modelo <- lm(charges ~ age + bmi + smoker + sex + children + region, data = data)
+summary(modelo)
+```
+
+#### 3.2 Validación de supuestos
+
+En esta sección comprobamos los supuestos clásicos de la regresión lineal múltiple sobre el modelo ajustado:
+
+##### 3.2.1 Normalidad de residuos
+
+```{r}
+# Extraer residuos
+residuos <- resid(modelo)
+
+# Test de Shapiro–Wilk
+shapiro.test(residuos)
+
+# Gráfico Q–Q
+qqnorm(residuos, main = "Q–Q Plot de residuos")
+qqline(residuos, col = "red", lwd = 2)
+```
+
+##### 3.2.2 Homocedasticidad
+
+```{r}
+# Residuos vs. valores ajustados
+plot(modelo$fitted.values, residuos,
+     xlab = "Valores ajustados",
+     ylab = "Residuos",
+     main = "Residuos vs. Ajustados")
+abline(h = 0, lty = 2, col = "blue")
+
+# Test de Breusch–Pagan
+library(lmtest)
+bptest(modelo)
+```
+
+##### 3.2.3 Multicolinealidad
+
+```{r}
+# Cálculo de VIF
+library(car)
+vif(modelo)
+```
+
+### 4 Modelado y validación de supuestos (modelo logarítmico)
+
+Dado que el modelo original no cumplió con algunos de los supuestos fundamentales de la regresión lineal (especialmente la normalidad y homocedasticidad de los residuos), se ajusta un modelo de regresión lineal múltiple con `log(charges)` como variable dependiente y todas las demás columnas disponibles como variables independientes. Las variables categóricas (sex, smoker y region) se incluyen mediante codificación factorial (variables dummy), permitiendo modelar sus efectos de manera adecuada.
+
+Esta transformación es útil cuando la variable respuesta presenta una distribución asimétrica o una varianza no constante.
+
+#### 4.1 Modelado
+
+```{r}
+# Ajuste del modelo de regresión lineal con log(charges)
+modelo_log <- lm(log(charges) ~ age + sex + bmi + children + smoker + region, data)
+summary(modelo_log)
+```
+
+#### 4.2 Validación de supuestos
+
+En esta sección se validan los supuestos clásicos de la regresión lineal aplicados al modelo logarítmico:
+
+##### 4.2.1 Normalidad de residuos
+
+```{r}
+# Extraer residuos
+residuos_log <- resid(modelo_log)
+
+# Test de Shapiro–Wilk para normalidad
+shapiro.test(residuos_log)
+
+# Gráfico Q–Q
+qqnorm(residuos_log, main = "Q–Q Plot de residuos_log")
+qqline(residuos_log, col = "red", lwd = 2)
+```
+
+##### 4.2.2 Homocedasticidad
+
+```{r}
+# Gráfico de residuos vs. valores ajustados
+plot(modelo_log$fitted.values, residuos_log,
+     xlab = "Valores ajustados",
+     ylab = "Residuos",
+     main = "Residuos vs. Ajustados")
+abline(h = 0, lty = 2, col = "blue")
+
+# Test de Breusch–Pagan
+library(lmtest)
+bptest(modelo_log)
+```
+
+##### 4.2.3 Multicolinealidad
+
+```{r}
+# Cálculo del VIF
+library(car)
+vif(modelo_log)
+```
+
+#### 4.3 Ajuste del modelo con errores robustos
+
+Debido a la posible presencia de heterocedasticidad persistente, se estima nuevamente el modelo logarítmico utilizando errores estándar robustos mediante el estimador de White (sandwich estimator).
+
+```{r}
+library(sandwich)
+library(lmtest)
+
+coeftest(modelo_log, vcov = vcovHC(modelo_log, type = "HC1"))
+
+```
+
+### 5 Modelos alternativos: Regresión robusta y GLM
+
+Con el objetivo de verificar la estabilidad de los resultados obtenidos y explorar métodos menos sensibles a la presencia de valores atípicos o violaciones de supuestos, se estiman dos modelos adicionales: una regresión robusta y un modelo lineal generalizado (GLM) con familia Gaussiana y función de enlace logarítmica.
+
+#### 5.1 Regresión robusta
+
+La regresión robusta se basa en el uso de estimadores M que reducen la influencia de observaciones extremas en los coeficientes. Es especialmente útil cuando los residuos presentan valores atípicos o la distribución no es normal.
+
+```{r}
+library(MASS)
+
+modelo_robusto <- rlm(log(charges) ~ age + sex + bmi + children + smoker + region, data = data)
+summary(modelo_robusto)
+```
+
+#### 5.2 Modelo Lineal Generalizado (GLM)
+
+El modelo GLM permite una especificación flexible al asumir que la variable respuesta sigue una distribución de la familia exponencial. Se utiliza una función de enlace logarítmica para modelar la media condicional de `charges`.
+
+```{r}
+modelo_glm <- glm(charges ~ age + bmi + smoker + sex + children + region,
+                  family = Gamma(link = "log"), data = data)
+summary(modelo_glm)
+```
+
+Evaluación de GLM (Gamma con enlace log)
+
+```{r}
+# Devianza residual y AIC
+summary(modelo_glm)$deviance
+AIC(modelo_glm)
+```
+
+### 6 Validación predictiva
+
+Para evaluar la capacidad predictiva de los modelos estimados, se realiza una validación cruzada simple. Se divide el conjunto de datos en:
+
+-   **Entrenamiento (70%)**
+
+-   **Prueba (30%)**
+
+Se entrena cada modelo sobre los datos de entrenamiento y se predice sobre los datos de prueba. Luego, se calcula el coeficiente de determinación R2R\^2R2 en prueba para comparar el desempeño.
+
+#### 6.1 División de datos
+
+```{r}
+set.seed(123)  # Para reproducibilidad
+indices <- sample(1:nrow(data), 0.7 * nrow(data))
+train <- data[indices, ]
+test <- data[-indices, ]
+```
+
+#### 6.2 Modelo original (regresión lineal)
+
+```{r}
+model_ols <- lm(charges ~ age + sex + bmi + children + smoker + region, data = train)
+pred_ols <- predict(model_ols, newdata = test)
+
+SSE_ols <- sum((test$charges - pred_ols)^2)
+SST_ols <- sum((test$charges - mean(test$charges))^2)
+R2_ols <- 1 - SSE_ols/SST_ols
+R2_ols
+```
+
+#### 6.3 Modelo logarítmico
+
+```{r}
+model_log <- lm(log(charges) ~ age + sex + bmi + children + smoker + region, data = train)
+log_pred <- predict(model_log, newdata = test)
+pred_log <- exp(log_pred)
+
+SSE_log <- sum((test$charges - pred_log)^2)
+SST_log <- sum((test$charges - mean(test$charges))^2)
+R2_log <- 1 - SSE_log/SST_log
+R2_log
+```
+
+#### 6.4 Modelo robusto
+
+```{r}
+library(MASS)
+model_rob <- rlm(log(charges) ~ age + sex + bmi + children + smoker + region, data = train)
+log_pred_rob <- predict(model_rob, newdata = test)
+pred_rob <- exp(log_pred_rob)
+
+SSE_rob <- sum((test$charges - pred_rob)^2)
+SST_rob <- sum((test$charges - mean(test$charges))^2)
+R2_rob <- 1 - SSE_rob/SST_rob
+R2_rob
+```
+
+#### 6.5 Modelo GLM (distribución gamma, función log)
+
+```{r}
+model_glm <- glm(charges ~ age + bmi + smoker + sex + children + region,
+                  family = Gamma(link = "log"), data = train)
+pred_glm <- predict(model_glm, newdata = test, type = "response")
+
+SSE_glm <- sum((test$charges - pred_glm)^2)
+SST_glm <- sum((test$charges - mean(test$charges))^2)
+R2_glm <- 1 - SSE_glm/SST_glm
+R2_glm
+```
+
+### 7 Interpretación de resultados
+
+#### 7.1 Exploratory Data Analysis (EDA)
+
+##### 7.1.1 Distribuciones univariadas
+
+La distribución de edad revela que la mayoría de los asegurados oscila entre 25 y 50 años (aprox. 57 %). Este rango sugiere un riesgo moderado, pues hay poca presencia de clientes mayores de 60 años, quienes tienden a generar costos más altos. Por otro lado, en el caso del IMC, más del 81 % de los asegurados supera el umbral de sobrepeso (IMC \> 25) y el 53 % supera el de obesidad (IMC \> 30). Esta concentración en valores elevados refuerza la expectativa de mayores reclamaciones médicas y, por tanto, de primas más altas. Y por último, la distribución del costo de póliza muestra una clara asimetría positiva: la mayoría de las primas se sitúa por debajo de 5 000 USD, pero existe una cola larga de pólizas con costos que alcanzan hasta 17 000 USD. Estos valores atípicos suelen asociarse a clientes de edad avanzada, con IMC alto y hábito de fumar.
+
+##### 7.1.2 Boxplots por categoría
+
+En el boxplot de hábito de fumar, los no fumadores tienen un costo medio de aproximadamente 1 525 USD, mientras que los fumadores alcanzan 11 326 USD de media. Esta brecha de más de 9 800 USD muestra el fuerte impacto del tabaquismo en el riesgo y la prima, así como una mayor variabilidad y presencia de outliers en ese grupo. Ahora, al comparar regiones, Southwest presenta la mediana de costo más alta (3 773 USD) y Northwest la más baja (2 960 USD), con una diferencia de alrededor de 800 USD entre ambas. Estas variaciones geográficas, aunque moderadas, validan la inclusión de la variable región para ajustar las primas según el perfil local. Y para finalizar, el número de hijos no muestra un patrón claro: las medianas oscilan entre 3 168 USD (1 hijo) y 3 788 USD (3 hijos), con una diferencia máxima de solo 620 USD. Esto indica que, si bien tener más dependientes tiene algún efecto, su impacto es menor que el de otras variables.
+
+##### 7.1.3 Series temporales
+
+La serie mensual del costo promedio de póliza entre enero 2020 y julio 2025 exhibe alta volatilidad. Destacan picos notables en noviembre 2020 (9 307 USD) y enero 2022 (7 906 USD), alternados con mínimos en marzo 2020 (727 USD) y abril 2024 (973 USD). Entre 2023 y mediados de 2025 persiste la alternancia de meses “baratos” y “caros”, aunque con una tendencia leve al alza al cerrar julio 2025 en 5 575 USD. Este comportamiento sugiere influencias estacionales, cambios en la composición de la cartera y ajustes periódicos de tarifas.
+
+Nota: Se convirtieron las variables `sex`, `smoker` y `region` a tipo factor para el modelado, y se eliminó la columna `date` al no usarla como predictor. Así se garantiza que el empaquetado de dummies y la estructura del dataframe sean adecuados para la regresión.\
+
+#### 7.2 Modelo original
+
+El modelo lineal explica el 86 % de la variabilidad en los costos de póliza, lo cual indica un buen ajuste general. El tabaquismo destaca como el factor más influyente, elevando el costo en casi 10 000 USD en promedio, con alta significancia estadística. También se encuentra un efecto positivo del número de hijos, aunque de menor magnitud. Otras variables como edad, IMC, sexo y región no resultaron significativas, lo cual sugiere que su impacto podría estar contenido en otros factores o requerir modelamiento no lineal.
+
+Sin embargo, se detectaron violaciones a los supuestos clásicos. Los residuos no siguen una distribución normal (p \< 0.001) y presentan colas pesadas según el Q–Q plot. Además, existe heterocedasticidad (p \< 0.001 en el test de Breusch-Pagan), observada como mayor dispersión de residuos en pólizas costosas. En contraste, no se detecta multicolinealidad entre los predictores (GVIF ≈ 1). Estas observaciones sugieren la necesidad de transformar la variable dependiente o aplicar métodos robustos en secciones posteriores.\
+
+#### 7.3 Modelo con transformación log
+
+Dado que el modelo lineal original violó los supuestos de normalidad y homocedasticidad de los residuos, se aplicó una transformación logarítmica a la variable dependiente (`log(charges)`). Esta transformación permitió mejorar parcialmente el ajuste, con un R² ajustado de aproximadamente 0.41. En este nuevo modelo, el tabaquismo sigue siendo el predictor más influyente: los fumadores presentan, en promedio, un costo casi 16 veces mayor que los no fumadores (exp(2.77) ≈ 15.96). La edad muestra un efecto positivo leve (0.87 % por año), al igual que el número de hijos (7.6 % por hijo), aunque ambos con significancia marginal. En contraste, las variables sexo, IMC y región no mostraron un efecto significativo.
+
+No obstante, el modelo logarítmico aún presentó limitaciones: los residuos rechazaron la normalidad (Shapiro–Wilk p \< 0.001) y mostraron heterocedasticidad significativa (Breusch–Pagan p \< 0.001), particularmente en las predicciones más altas. La ausencia de multicolinealidad (GVIF ≈ 1) confirmó que las variables independientes no están correlacionadas entre sí. Ante la persistencia de estos problemas, se recurrió a una reestimación con errores estándar robustos mediante el estimador de White, con el fin de corregir la varianza no constante de los residuos y mejorar la validez de las inferencias.
+
+La estimación robusta conservó los coeficientes del modelo logarítmico, pero ajustó sus errores estándar, reforzando la significancia del tabaquismo y manteniendo la interpretación marginal de edad e hijos. Aunque el ajuste global no varió, las inferencias resultan más confiables al no depender de la homocedasticidad. Por tanto, el modelo logarítmico con errores robustos representa una mejora frente a la regresión lineal simple. Sin embargo, sugiere que aún puede ser necesario explorar modelos más flexibles como el robusto RLM o el modelo lineal generalizado (GLM), los cuales se abordarán en las siguientes secciones.
+
+#### 7.4 Modelos alternativos
+
+Como complemento al modelo logarítmico clásico, se aplicaron dos enfoques alternativos para evaluar la estabilidad de los resultados frente a valores atípicos o violaciones de supuestos clásicos. La regresión robusta, basada en estimadores M, ajusta los coeficientes reduciendo el peso de observaciones extremas, mientras que el modelo lineal generalizado (GLM) con familia Gamma y enlace log se adapta a distribuciones asimétricas y varianza no constante, sin requerir transformación previa de la variable dependiente.
+
+##### 7.4.1 Regresión robusta
+
+En la regresión robusta, los coeficientes resultaron prácticamente idénticos a los del modelo logarítmico clásico, lo que sugiere que los valores atípicos no influyeron excesivamente en el ajuste. El coeficiente de fumador se mantiene como el más significativo (2.77), equivalente a un aumento de casi 16 veces en el costo esperado. Edad (0.87 % por año) y número de hijos (7.6% por hijo) también siguen mostrando efectos marginalmente significativos. Este modelo es particularmente útil cuando persisten outliers o se sospecha que las inferencias por OLS pueden ser distorsionadas.
+
+##### 7.4.2 Modelo Lineal Generalizado Gamma
+
+El modelo GLM Gamma con enlace logarítmico ofrece una especificación más realista del proceso generador de los datos, al modelar directamente la media de los costos sin asumir normalidad ni homocedasticidad. Aquí también se confirma el rol predominante del tabaquismo (coeficiente ≈ 2.03; p \< 0.001), así como los efectos positivos de edad y children, aunque ligeramente atenuados. El AIC obtenido (8748) y la reducción sustancial en la devianza (de 1047 a 613) indican un buen ajuste bajo esta familia. En conjunto, tanto la regresión robusta como el GLM Gamma consolidan la robustez de los hallazgos obtenidos previamente y confirman que el tabaquismo es el principal determinante del costo médico, incluso bajo supuestos más flexibles.
+
+#### 7.5 Validación predictiva
+
+La comparación de los cuatro modelos en datos no vistos revela que la regresión lineal clásica (OLS) obtuvo el mayor R² en prueba (≈ 0.8776), lo cual indica que, sin transformación, captura con precisión la variabilidad de los costos en el conjunto de prueba. Sin embargo, este modelo ya se demostró impropio para inferencias fiables debido a la violación de supuestos de normalidad y homocedasticidad en los residuos.
+
+El modelo logarítmico (log‑OLS) mejora la adecuación de supuestos y seca la influencia de valores extremos pero sacrifica parte del poder predictivo, alcanzando un R² de ≈ 0.7985. La regresión robusta (RLM sobre log(charges)) muestra un desempeño muy similar ( R² ≈ 0.7899), confirmando que la mayoría de la pérdida de ajuste se debe a la transformación logarítmica y no solo al tratamiento de outliers.
+
+Por su parte, el GLM Gamma con enlace log logra un R² intermedio (≈ 0.8444) al modelar directamente la variable original sin requerir transformación previa. Este resultado demuestra que el GLM ofrece un buen balance entre ajuste predictivo y cumplimiento de supuestos (al usar la familia Gamma), consolidándose como la especificación recomendada cuando se busca robustez frente a asimetría y heterocedasticidad.
+
+## Resultados
+
+### 1 Resumen del modelo final (GLM Gamma‑log)
+
+A continuación se presenta el resumen de coeficientes y las métricas de ajuste para el modelo lineal generalizado con familia Gamma y enlace logarítmico, considerado como especificación final:
+
+```{r}
+summary(modelo_glm)
+```
+
+-   **Deviance residual:** 613.02
+
+-   **AIC:** 8748.01
+
+-   **Pseudo‑R² en datos de entrenamiento:** No aplica directamente en GLM, pero el modelo muestra una reducción de deviance significativa (de 1047.45 a 613.02).
+
+### 2 Comparación de desempeño predictivo
+
+Se comparan los cuatro modelos en base al coeficiente de determinación R² calculado sobre el conjunto de prueba (30 % de los datos):
+
+| Modelo                          | R² en prueba         |
+|---------------------------------|----------------------|
+| Regresión lineal (OLS)          | `r round(R2_ols, 4)` |
+| Regresión logarítmica (log-OLS) | `r round(R2_log, 4)` |
+| Regresión robusta               | `r round(R2_rob, 4)` |
+| Modelo GLM (Gamma log)          | `r round(R2_glm, 4)` |
+
+Estos resultados cuantitativos permiten visualizar claramente que, aunque la regresión OLS pura alcanza el mayor R², el GLM Gamma‑log combina un ajuste predictivo competitivo con la adecuación estadística para datos asimétricos y heterocedásticos, razón por la cual se recomienda como modelo final en este estudio.
+
+## Discusión
+
+El análisis comparativo de los cuatro modelos mostró un balance entre la habilidad para predecir y los supuestos estadísticos. A pesar de que la prueba de regresión lineal clásica (OLS) registró el R² más elevado (0.8776), sus residuos no cumplieron de manera evidente con los supuestos de normalidad y homocedasticidad, lo que restringió la validez de los intervalos de confianza y las pruebas de significancia. El modelo logarítmico optimizó la distribución del error y disminuyó la potencia de los valores atípicos, sin embargo, resultó en una pérdida significativa de capacidad explicativa (R²≈ 0.7985).
+
+Al incorporar errores estándar robustos (White) al modelo logarítmico, se restauró la fiabilidad de las inferencias sin modificar los coeficientes: se conservaron los efectos principales y los niveles de significancia, pero las pruebas t e intervalos son ahora fiables aun en presencia de heterocedasticidad. La regresión robusta (RLM), basada en estimadores M, corroboró además que los outliers no alteraban los resultados esenciales, pues sus coeficientes coinciden prácticamente con los del modelo log‑OLS. Sin embargo, estos enfoques sacrifican parte del poder predictivo en favor de mayor solidez estadística.
+
+Por su parte, el GLM Gamma‑log representa la mejor combinación práctica para pricing de seguros médicos. Con un R² de prueba de 0.8444, conserva un buen desempeño predictivo y, al modelar directamente la variable original, evita los sesgos de retransfórmación. La especificación Gamma‑log se adapta de forma natural a la asimetría y heterocedasticidad de los costos, garantizando inferencias más fiables sin necesidad de transformaciones ad hoc.
+
+### 1 Implicaciones prácticas
+
+-   El coeficiente de “smokeryes” en el GLM (≈2.03) indica que, si las demás variables se mantienen constantes, la prima de un fumador es casi 8 veces mayor (`exp(2.03) ≈ 7.6`), dato clave para segmentar tarifas.
+
+-   Las elasticidades de edad (0.64 % por año) y children (6.43 % por dependiente) permiten ajustar incrementos de primas de forma porcentual, facilitando su aplicación en tablas de tarifas.
+
+-   Los hombres pagan en promedio un 5.02 % más que las mujeres , cada punto adicional de IMC incrementa la prima en 0.32 %, y las variaciones regionales son: Northwest, –4.62 %; Southeast, +2.78 %; Southwest, +7.80 %. Aunque no resulten estadísticamente significativos, estos ajustes permiten afinar las tarifas sin recurrir a segmentaciones geográficas complejas.
+
+-   Al evitar la retransformación de un modelo logarítmico, el GLM simplifica la puesta en producción de predicciones en dólares, sin necesidad de “exponenciar” valores.
+
+### 2 Fortalezas y limitaciones
+
+#### 1.1 Fortalezas
+
+-   Evaluación de múltiples modelos (OLS, log‑OLS, RLM, GLM) con validación de supuestos.
+
+-   Uso de transformaciones y estimaciones robustas para garantizar la fiabilidad de las inferencias.
+
+-   Comparación de desempeño predictivo en datos no vistos mediante R².
+
+#### 1.2 Limitaciones
+
+-   Datos simulados, que pueden no capturar totalmente la complejidad de un mercado real.
+
+-   Ausencia de validación externa con datos de otra fuente.
+
+-   No se incluyeron variables clínicas o de estilo de vida que podrían mejorar el ajuste.
+
+## Conclusiones y Recomendaciones
+
+El análisis comparativo de los cuatro modelos confirma que el GLM Gamma‑log es la especificación más adecuada para estimar costos de pólizas médicas. Este modelo combina un rendimiento predictivo sólido (R² ≈ 0.8444) con una correcta gestión de la asimetría y la heterocedasticidad de los datos, evitando sesgos de retransformación y simplificando la producción de predicciones en dólares.
+
+Dentro de esta especificación, el tabaquismo se mantiene como el factor de riesgo más crucial, con un promedio de casi 8 veces más que los no fumadores, mientras que la edad y el número de hijos ajustan la prima en 0.64 % y 6.43 % por unidad respectivamente. Variables como IMC, sexo y región no resultaron significativas tras controlar por estos factores; sin embargo, sus efectos menores pueden ser útiles para afinar tarifas de forma porcentual y evaluarse en futuros análisis con datos reales.
+
+Recomendaciones prácticas
+
+1.  Implementar el GLM Gamma‑log en el proceso de pricing, usando los coeficientes directamente como factores multiplicadores sobre una prima base.
+
+2.  Comunicar las elasticidades a los equipos de negocio para que diseñen esquemas de tarifas transparentes y segmentados, así como promociones o incentivos (p. ej., descuentos a no fumadores).
+
+3.  Recopilar y validar con datos reales de la aseguradora, incorporando variables clínicas (comorbilidades, tratamientos previos) para mejorar el ajuste y la generalización.
+
+4.  Monitorear periódicamente el desempeño con métricas comentadas (RMSE, MAE) y reentrenar el modelo ante cambios de mercado o regulatorios.
+
+5.  Como métrica de seguimiento operativo, se sugiere calcular periódicamente el MAPE y el índice de Gini en el conjunto de prueba para complementar el R² y monitorizar la precisión y la discriminación del modelo en producción.
